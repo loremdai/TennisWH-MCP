@@ -1,0 +1,22 @@
+[project]
+name = "tennis-warehouse-mcp"
+version = "0.1.0"
+description = "MCP Server for Tennis Warehouse API integration"
+requires-python = ">=3.10"
+authors = [
+    {name = "Avi", email = "avi@example.com"}
+]
+dependencies = [
+    "mcp[cli]",
+    "httpx",
+    "requests",
+    "pydantic",
+    "beautifulsoup4",
+]
+
+[build-system]
+requires = ["setuptools>=61.0", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools]
+py-modules = ["main", "tennis_warehouse_api"]
