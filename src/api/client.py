@@ -415,34 +415,45 @@ class TennisWarehouseAPI:
         return scores
 
     def _extract_lab_data(self, soup: BeautifulSoup) -> Dict[str, str]:
-        """Extract TWU Lab Data from table
-
+        """Extract TWU Lab Data and Tech Specs from tables
+        
         Supports multiple table structures:
-        1. Tables with id="table_data"
+        1. header/div with id="table_data" or "tech_specs" followed by table
         2. Tables with class="racquet_specs_table"
         """
         lab_data = {}
-
-        # Method 1: Try table_data div (original structure)
-        table_data_div = soup.find("div", id="table_data")
-        if table_data_div:
-            table_div = table_data_div.find_next_sibling(
-                "div", class_="table-responsive"
-            )
-            if table_div:
-                table = table_div.find("table")
-                if table:
-                    lab_data = self._parse_lab_table(table)
-                    if lab_data:
-                        return lab_data
-
+        
+        # Method 1: Try finding header or div with specific IDs
+        for section_id in ["table_data", "tech_specs"]:
+            # Try header first (newer structure)
+            section = soup.find("header", id=section_id)
+            if not section:
+                # Fallback to div (older structure)
+                section = soup.find("div", id=section_id)
+            
+            if section:
+                # Look for table in next sibling or within a div wrapper
+                next_elem = section.find_next_sibling()
+                if next_elem:
+                    # Check if next sibling is a div containing a table
+                    if next_elem.name == "div":
+                        table = next_elem.find("table")
+                        if table:
+                            data = self._parse_lab_table(table)
+                            lab_data.update(data)
+                    # Or if next sibling is directly a table
+                    elif next_elem.name == "table":
+                        data = self._parse_lab_table(next_elem)
+                        lab_data.update(data)
+        
+        if lab_data:
+            return lab_data
+        
         # Method 2: Try racquet_specs_table class
         specs_table = soup.find("table", class_="racquet_specs_table")
         if specs_table:
             lab_data = self._parse_lab_table(specs_table)
-            if lab_data:
-                return lab_data
-
+        
         return lab_data
 
     def _parse_lab_table(self, table) -> Dict[str, str]:
@@ -486,67 +497,152 @@ class TennisWarehouseAPI:
         return lab_data
 
     def _extract_positives_negatives(self, soup: BeautifulSoup) -> tuple:
-        """Extract positives and negatives from review"""
+        """Extract positives and negatives from review
+
+        Supports multiple structures:
+        1. .review-summary_list containers with icon-based headers
+        2. div#positivesnegatives with text-based headers
+        """
         positives = []
         negatives = []
 
-        pos_neg_div = soup.find("div", id="positivesnegatives")
-        if pos_neg_div:
-            summary_lists = pos_neg_div.find_all("div", class_="review-summary_list")
-            for summary_list in summary_lists:
-                heading_div = summary_list.find(
-                    "div", class_="review-summary_list_heading"
+        # Method 1: Try .review-summary_list containers (newer structure)
+        summary_lists = soup.find_all("div", class_="review-summary_list")
+        for summary_list in summary_lists:
+            header = summary_list.find("div", class_="review-summary_list_header")
+            body = summary_list.find("div", class_="review-summary_list_body")
+
+            if header and body:
+                # Check for icon in header (green check = positive, red x = negative)
+                header_html = str(header)
+                is_positive = (
+                    "check" in header_html.lower() or "positive" in header_html.lower()
                 )
-                if heading_div:
-                    heading_text = heading_div.get_text(strip=True).lower()
+                is_negative = (
+                    "times" in header_html.lower()
+                    or "negative" in header_html.lower()
+                    or "close" in header_html.lower()
+                )
 
-                    # Find all <p> tags in this summary list
-                    paragraphs = summary_list.find_all("p")
-                    items = []
+                # Extract items from body
+                items = []
+                # Try to find paragraphs or direct text
+                paragraphs = body.find_all("p")
+                if paragraphs:
                     for p in paragraphs:
-                        # Split by <br> tags
-                        text_parts = []
-                        for content in p.contents:
-                            if content.name == "br":
-                                continue
-                            text = str(content).strip()
-                            if text:
-                                text_parts.append(text)
+                        text = p.get_text("\n", strip=True)
+                        for line in text.split("\n"):
+                            line = line.strip()
+                            if line and len(line) > 1:
+                                items.append(line)
+                else:
+                    # Try direct text content
+                    text = body.get_text("\n", strip=True)
+                    for line in text.split("\n"):
+                        line = line.strip()
+                        if line and len(line) > 1:
+                            items.append(line)
 
-                        # Join and split again to handle multiple items
-                        full_text = " ".join(text_parts)
-                        for item in full_text.split("\n"):
-                            item = item.strip()
-                            if item:
-                                items.append(item)
+                if is_positive and items:
+                    positives = items
+                elif is_negative and items:
+                    negatives = items
 
-                    if "positive" in heading_text:
+        # Method 2: Fallback to old structure
+        if not positives and not negatives:
+            pos_neg_div = soup.find("div", id="positivesnegatives")
+            if pos_neg_div:
+                summary_lists = pos_neg_div.find_all(
+                    "div", class_="review-summary_list"
+                )
+                for summary_list in summary_lists:
+                    heading_div = summary_list.find(
+                        "div", class_="review-summary_list_heading"
+                    )
+                    if heading_div:
+                        heading_text = heading_div.get_text(strip=True).lower()
+                        paragraphs = summary_list.find_all("p")
+                        items = []
+                        for p in paragraphs:
+                            text = p.get_text("\n", strip=True)
+                            for line in text.split("\n"):
+                                line = line.strip()
+                                if line:
+                                    items.append(line)
+
+                        if "positive" in heading_text:
+                            positives = items
+                        elif "negative" in heading_text:
+                            negatives = items
+
+        # Method 3: Handle duplicate IDs with simple p/br structure
+        if not positives and not negatives:
+            all_pos_neg = soup.find_all("div", id="positivesnegatives")
+            if len(all_pos_neg) >= 2:
+                # First occurrence = positives, second = negatives
+                for i, div in enumerate(all_pos_neg[:2]):
+                    items = []
+                    paragraphs = div.find_all("p")
+                    for p in paragraphs:
+                        for text in p.stripped_strings:
+                            text = text.strip()
+                            if text and len(text) > 1:
+                                items.append(text)
+
+                    if i == 0:
                         positives = items
-                    elif "negative" in heading_text:
+                    else:
                         negatives = items
+            elif len(all_pos_neg) == 1:
+                # Only one div, extract all items as positives
+                div = all_pos_neg[0]
+                paragraphs = div.find_all("p")
+                for p in paragraphs:
+                    for text in p.stripped_strings:
+                        text = text.strip()
+                        if text and len(text) > 1:
+                            positives.append(text)
 
         return positives, negatives
 
     def _extract_playtester_thoughts(self, soup: BeautifulSoup) -> list:
-        """Extract playtester thoughts from review"""
+        """Extract playtester thoughts from review
+
+        Supports multiple structures:
+        1. .review-playtesters_section containers (detailed feedback)
+        2. Category-based paragraphs (original structure)
+        """
         thoughts = []
 
-        for cat_id in REVIEW_CATEGORY_IDS:
-            cat_div = soup.find("div", id=cat_id)
-            if cat_div:
-                next_elem = cat_div.find_next_sibling()
-                count = 0
-                while next_elem and count < 5:
-                    if next_elem.name == "div":
-                        paragraphs = next_elem.find_all("p")
-                        for p in paragraphs:
-                            text = p.get_text(strip=True)
-                            if text and len(text) > 50:
-                                thoughts.append(text)
-                    next_elem = next_elem.find_next_sibling()
-                    count += 1
+        # Method 1: Try .review-playtesters_section (newer structure)
+        playtester_sections = soup.find_all("div", class_="review-playtesters_section")
+        for section in playtester_sections:
+            # Extract all paragraphs from this section
+            paragraphs = section.find_all("p")
+            for p in paragraphs:
+                text = p.get_text(strip=True)
+                # Filter out very short text and headers
+                if text and len(text) > 50 and not text.endswith(":"):
+                    thoughts.append(text)
 
-                    if next_elem and next_elem.get("id") in REVIEW_CATEGORY_IDS:
-                        break
+        # Method 2: Try category-based extraction (original structure)
+        if not thoughts:
+            for cat_id in REVIEW_CATEGORY_IDS:
+                cat_div = soup.find("div", id=cat_id)
+                if cat_div:
+                    next_elem = cat_div.find_next_sibling()
+                    count = 0
+                    while next_elem and count < 5:
+                        if next_elem.name == "div":
+                            paragraphs = next_elem.find_all("p")
+                            for p in paragraphs:
+                                text = p.get_text(strip=True)
+                                if text and len(text) > 50:
+                                    thoughts.append(text)
+                        next_elem = next_elem.find_next_sibling()
+                        count += 1
 
-        return thoughts[:10]  # Limit to 10
+                        if next_elem and next_elem.get("id") in REVIEW_CATEGORY_IDS:
+                            break
+
+        return thoughts[:20]  # Limit to 20 (increased from 10)
