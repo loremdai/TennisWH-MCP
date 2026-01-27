@@ -10,71 +10,136 @@ from ..api import TennisWarehouseAPI
 from ..utils.validators import validate_url
 
 
+# 评测索引页面 URL
+REVIEW_INDEX_URLS = {
+    "racquets": "https://www.tennis-warehouse.com/reviewedracquets.html",
+    "shoes": "https://www.tennis-warehouse.com/reviewedshoes.html",
+    "strings": "https://www.tennis-warehouse.com/reviewedstrings.html",
+}
+
+
 def search_review_page(
-    tw_api: TennisWarehouseAPI, product_name: str, brand: Optional[str] = None
+    tw_api: TennisWarehouseAPI,
+    product_name: str,
+    brand: Optional[str] = None,
+    category: Optional[str] = None,
 ) -> Dict[str, Any]:
     """搜索产品评测页面
 
-    由于评测页面的 URL 命名规则不固定，此函数通过搜索来找到实际的评测页面。
+    从 Tennis Warehouse 的评测索引页面中搜索匹配的评测。
+    这比通过搜索 API 更准确，因为索引页面包含所有已发布的评测。
 
     Args:
         tw_api: Tennis Warehouse API 客户端
         product_name: 产品名称（如 "Pure Strike 100"）
         brand: 品牌名称（如 "Babolat"），可选
+        category: 产品类别（"racquets", "shoes", "strings"），可选
 
     Returns:
         包含评测页面 URL 或错误信息的字典
     """
-    # 构造搜索查询
-    search_query = (
-        f"{brand} {product_name} review" if brand else f"{product_name} review"
-    )
-
-    print(f"Info: Searching for review page: {search_query}", file=sys.stderr)
-
-    # 搜索评测相关内容
-    raw_response = tw_api.search_products(search_term=search_query, limit=20)
-
-    if "error" in raw_response:
-        return {
-            "error": raw_response["error"],
-            "suggestion": "Try searching with a different product name or check if the review exists",
-        }
-
-    # 解析 HTML 查找评测页面链接
+    import requests
     from bs4 import BeautifulSoup
 
-    soup = BeautifulSoup(raw_response.get("html_content", ""), "html.parser")
+    # 确定要搜索的索引页面
+    index_urls = []
+    if category and category.lower() in REVIEW_INDEX_URLS:
+        index_urls.append(REVIEW_INDEX_URLS[category.lower()])
+    else:
+        # 如果没有指定类别，搜索所有索引页面
+        index_urls = list(REVIEW_INDEX_URLS.values())
 
-    # 查找所有链接
-    review_links = []
-    for link in soup.find_all("a", href=True):
-        href = link["href"]
-        # 查找评测页面链接（通常在 learning_center/racquet_reviews/ 目录下）
-        if "learning_center" in href and "review" in href.lower():
-            full_url = (
-                href
-                if href.startswith("http")
-                else f"https://www.tennis-warehouse.com{href}"
-            )
-            link_text = link.get_text(strip=True)
+    print(
+        f"Info: Searching review index pages for: {brand} {product_name}"
+        if brand
+        else f"Info: Searching review index pages for: {product_name}",
+        file=sys.stderr,
+    )
 
-            review_links.append({"url": full_url, "title": link_text})
+    all_review_links = []
 
-    if not review_links:
+    for index_url in index_urls:
+        try:
+            response = requests.get(index_url, timeout=10)
+            response.raise_for_status()
+
+            soup = BeautifulSoup(response.text, "html.parser")
+
+            # 查找所有评测链接
+            for link in soup.find_all("a", href=True):
+                href = link["href"]
+                link_text = link.get_text(strip=True)
+
+                # 过滤评测页面链接
+                if "review" in href.lower() and "learning_center" in href:
+                    # 构造完整 URL
+                    full_url = (
+                        href
+                        if href.startswith("http")
+                        else f"https://www.tennis-warehouse.com{href}"
+                    )
+
+                    # 检查是否匹配产品名称和品牌
+                    text_lower = link_text.lower()
+                    product_lower = product_name.lower()
+
+                    # 基本匹配：链接文本包含产品名称的关键词
+                    product_keywords = product_lower.split()
+                    matches = sum(
+                        1 for keyword in product_keywords if keyword in text_lower
+                    )
+
+                    # 如果指定了品牌，也要匹配品牌
+                    brand_match = True
+                    if brand:
+                        brand_match = brand.lower() in text_lower
+
+                    # 只添加匹配的评测
+                    if matches > 0 and brand_match:
+                        all_review_links.append(
+                            {
+                                "url": full_url,
+                                "title": link_text,
+                                "match_score": matches,
+                            }
+                        )
+
+        except Exception as e:
+            print(f"Warning: Failed to fetch {index_url}: {e}", file=sys.stderr)
+            continue
+
+    if not all_review_links:
         return {
             "error": "No review page found for this product",
-            "suggestion": f"Searched for '{search_query}' but found no review links. The product may not have a published review yet.",
-            "search_query": search_query,
+            "suggestion": (
+                f"Searched for '{brand} {product_name}' in review index pages but found no matches. "
+                "The product may not have a published review yet."
+            )
+            if brand
+            else (
+                f"Searched for '{product_name}' in review index pages but found no matches. "
+                "The product may not have a published review yet."
+            ),
+            "search_query": f"{brand} {product_name}" if brand else product_name,
         }
 
-    # 返回找到的评测链接
-    print(f"Success: Found {len(review_links)} review page(s)", file=sys.stderr)
+    # 按匹配分数排序
+    all_review_links.sort(key=lambda x: x["match_score"], reverse=True)
+
+    # 移除重复的 URL
+    seen_urls = set()
+    unique_links = []
+    for link in all_review_links:
+        if link["url"] not in seen_urls:
+            seen_urls.add(link["url"])
+            unique_links.append({"url": link["url"], "title": link["title"]})
+
+    print(f"Success: Found {len(unique_links)} review page(s)", file=sys.stderr)
 
     return {
-        "review_pages": review_links,
-        "count": len(review_links),
-        "search_query": search_query,
+        "review_pages": unique_links,
+        "count": len(unique_links),
+        "search_query": f"{brand} {product_name}" if brand else product_name,
         "suggestion": "Use the first URL with get_product_review tool to fetch the review data",
     }
 

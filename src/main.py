@@ -53,13 +53,14 @@ def search_products(
 
     For more detailed information, use these follow-up tools:
     - get_product_specs(product_url) - Get technical specifications (Swingweight, Stiffness, etc.)
+    - search_review(product_name, brand, category) - Find review pages
     - get_product_review(review_url) - Get performance ratings and playtester feedback
 
     Workflow example:
     1. Use this tool to find products
     2. Extract product_url from results
     3. Call get_product_specs(product_url) for detailed specs
-       OR search for reviews using the product name
+       OR search_review for reviews
 
     Args:
         query: Search term (e.g., "wilson racquet", "nike shoes", "head bag")
@@ -96,7 +97,7 @@ def get_specs(product_url: str) -> Dict[str, Any]:
 
     This tool extracts specifications from product detail pages.
     It does NOT provide review scores or performance ratings.
-    For reviews, use get_review instead.
+    For reviews, use search_review and get_review instead.
 
     Workflow:
     1. User asks about product specifications
@@ -146,7 +147,7 @@ def search_racquets(
     1. Use this tool to find racquets
     2. Extract product_url from results
     3. Call get_specs(product_url) for technical specs
-       OR get_review(review_url) for performance ratings
+       OR search_review(product_name, brand, "racquets") for reviews
 
     Args:
         brand: Racquet brand (e.g., "Wilson", "Head", "Babolat", "Yonex")
@@ -202,7 +203,7 @@ def check_availability(product_name: str) -> Dict[str, Any]:
 
     Returns availability status with product_url. Use the URL for more details:
     - get_specs(product_url) - Get detailed specifications
-    - Search for reviews using the product name
+    - search_review(product_name, brand, category) - Find review pages
 
     Example workflow:
     1. Call this tool to check availability
@@ -219,36 +220,41 @@ def check_availability(product_name: str) -> Dict[str, Any]:
 
 
 @mcp.tool()
-def search_review(product_name: str, brand: Optional[str] = None) -> Dict[str, Any]:
+def search_review(
+    product_name: str, brand: Optional[str] = None, category: Optional[str] = None
+) -> Dict[str, Any]:
     """Search for product review pages on Tennis Warehouse.
 
     IMPORTANT: Use this tool BEFORE calling get_review to find the correct review URL.
 
-    Review page URLs have inconsistent naming patterns, so guessing the URL often fails.
-    This tool searches for the actual review page and returns the correct URL.
+    This tool searches Tennis Warehouse's official review index pages for accurate results:
+    - Racquets: https://www.tennis-warehouse.com/reviewedracquets.html
+    - Shoes: https://www.tennis-warehouse.com/reviewedshoes.html
+    - Strings: https://www.tennis-warehouse.com/reviewedstrings.html
 
     Common workflow:
     1. User asks: "What's the review for Babolat Pure Strike 100?"
-    2. Call this tool: search_review("Pure Strike 100", "Babolat")
-    3. Extract the review URL from results
+    2. Call this tool: search_review("Pure Strike 100", "Babolat", "racquets")
+    3. Extract the review URL from results (sorted by relevance)
     4. Call get_review with the correct URL
 
     Why use this tool:
     - Review URLs don't follow predictable patterns
     - Example: "Pure Strike 100 16x20" → "PS1620review.html" (not "BPS1001620review.html")
-    - This tool finds the actual URL by searching
+    - This tool searches official review index pages for accurate matches
 
     Args:
         product_name: Product name (e.g., "Pure Strike 100", "FX 500")
         brand: Brand name (e.g., "Babolat", "Dunlop") - helps narrow search
+        category: Product category ("racquets", "shoes", "strings") - searches specific index
 
     Returns:
         Dictionary containing:
-        - review_pages: List of found review URLs with titles
+        - review_pages: List of found review URLs with titles (sorted by relevance)
         - count: Number of review pages found
         - suggestion: Next steps to take
     """
-    return search_review_page(tw_api, product_name, brand)
+    return search_review_page(tw_api, product_name, brand, category)
 
 
 @mcp.tool()
@@ -278,9 +284,8 @@ def get_review(review_url: str) -> Dict[str, Any]:
 
     Example workflow:
         1. User asks: "What's the review for Dunlop FX 500?"
-        2. Use smart_search to find the product
-        3. User provides or you find the review URL
-        4. Call get_review with the review URL
+        2. Use search_review to find the review URL
+        3. Call get_review with the review URL
     """
     return get_product_review(tw_api, review_url)
 
@@ -293,12 +298,12 @@ def get_deals(
 
     Returns deals with product_url. For detailed information:
     - get_specs(product_url) - Get technical specifications
-    - get_review(review_url) - Get performance ratings
+    - search_review(product_name, brand, category) - Find review pages
 
     Example workflow:
     1. Call this tool to find deals
     2. Extract product_url from results
-    3. Use get_specs or get_review for more details
+    3. Use get_specs or search_review for more details
 
     Args:
         category: Product category to search for deals (e.g., "RACQUETS", "SHOES")
@@ -328,13 +333,14 @@ def smart_search(query: str, max_results: int = 20) -> List[Dict[str, Any]]:
 
     If user asks about reviews, ratings, or performance:
     1. Use this tool to find the product
-    2. Then call get_review with the review URL
+    2. Then call search_review to find review pages
+    3. Then call get_review with the review URL
 
     Example workflows:
     - Technical specs: "What's the Swingweight of Wilson Blade 98?"
       → smart_search → get_specs
     - Reviews: "How does the Dunlop FX 500 play?"
-      → smart_search → get_review
+      → smart_search → search_review → get_review
 
     Args:
         query: Search term (e.g., "tennis balls", "wilson racquet", "nike shoes")
