@@ -22,6 +22,7 @@ from src.tools import (
     search_tennis_shoes,
     smart_search_tennis,
     get_tennis_deals,
+    search_review_page,
     get_product_specs,
     get_product_review,
     get_product_categories,
@@ -215,6 +216,39 @@ def check_availability(product_name: str) -> Dict[str, Any]:
         Availability status with product details and URL
     """
     return check_product_availability(tw_api, product_name)
+
+
+@mcp.tool()
+def search_review(product_name: str, brand: Optional[str] = None) -> Dict[str, Any]:
+    """Search for product review pages on Tennis Warehouse.
+
+    IMPORTANT: Use this tool BEFORE calling get_review to find the correct review URL.
+
+    Review page URLs have inconsistent naming patterns, so guessing the URL often fails.
+    This tool searches for the actual review page and returns the correct URL.
+
+    Common workflow:
+    1. User asks: "What's the review for Babolat Pure Strike 100?"
+    2. Call this tool: search_review("Pure Strike 100", "Babolat")
+    3. Extract the review URL from results
+    4. Call get_review with the correct URL
+
+    Why use this tool:
+    - Review URLs don't follow predictable patterns
+    - Example: "Pure Strike 100 16x20" → "PS1620review.html" (not "BPS1001620review.html")
+    - This tool finds the actual URL by searching
+
+    Args:
+        product_name: Product name (e.g., "Pure Strike 100", "FX 500")
+        brand: Brand name (e.g., "Babolat", "Dunlop") - helps narrow search
+
+    Returns:
+        Dictionary containing:
+        - review_pages: List of found review URLs with titles
+        - count: Number of review pages found
+        - suggestion: Next steps to take
+    """
+    return search_review_page(tw_api, product_name, brand)
 
 
 @mcp.tool()

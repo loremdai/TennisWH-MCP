@@ -13,6 +13,7 @@ from .search_tools import (
 )
 
 from .product_tools import (
+    search_review_page,
     get_product_specs,
     get_product_review,
     get_product_categories,
@@ -33,6 +34,7 @@ __all__ = [
     "smart_search_tennis",
     "get_tennis_deals",
     # 产品工具
+    "search_review_page",
     "get_product_specs",
     "get_product_review",
     "get_product_categories",

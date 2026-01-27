@@ -1,100 +1,188 @@
-"""Product-related tool functions"""
+"""产品相关工具函数
+
+包含产品规格、评测、分类和库存检查等功能。
+"""
 
 import sys
-from typing import Dict, Any
+from typing import Dict, Any, List, Optional
 
-from ..api import TennisWarehouseAPI, extract_products
-from ..utils.constants import PRODUCT_CATEGORIES
-from ..utils.validators import validate_search_query
+from ..api import TennisWarehouseAPI
+from ..utils.validators import validate_url
 
 
-def get_product_specs(tw_api: TennisWarehouseAPI, product_url: str) -> Dict[str, Any]:
-    """Get detailed technical specifications for a tennis product"""
+def search_review_page(
+    tw_api: TennisWarehouseAPI, product_name: str, brand: Optional[str] = None
+) -> Dict[str, Any]:
+    """搜索产品评测页面
 
-    print("Info: Getting product specifications from URL", file=sys.stderr)
+    由于评测页面的 URL 命名规则不固定，此函数通过搜索来找到实际的评测页面。
 
-    if not product_url or not product_url.strip():
-        return {"error": "Product URL is required"}
+    Args:
+        tw_api: Tennis Warehouse API 客户端
+        product_name: 产品名称（如 "Pure Strike 100"）
+        brand: 品牌名称（如 "Babolat"），可选
 
-    result = tw_api.get_product_specs(product_url)
+    Returns:
+        包含评测页面 URL 或错误信息的字典
+    """
+    # 构造搜索查询
+    search_query = (
+        f"{brand} {product_name} review" if brand else f"{product_name} review"
+    )
 
-    if "error" in result:
-        print(f"Error: Failed to get specs: {result['error']}", file=sys.stderr)
-        return result
+    print(f"Info: Searching for review page: {search_query}", file=sys.stderr)
 
-    specs = result.get("specs", {})
-    print(f"Success: Retrieved {len(specs)} specifications", file=sys.stderr)
+    # 搜索评测相关内容
+    raw_response = tw_api.search_products(search_term=search_query, limit=20)
+
+    if "error" in raw_response:
+        return {
+            "error": raw_response["error"],
+            "suggestion": "Try searching with a different product name or check if the review exists",
+        }
+
+    # 解析 HTML 查找评测页面链接
+    from bs4 import BeautifulSoup
+
+    soup = BeautifulSoup(raw_response.get("html_content", ""), "html.parser")
+
+    # 查找所有链接
+    review_links = []
+    for link in soup.find_all("a", href=True):
+        href = link["href"]
+        # 查找评测页面链接（通常在 learning_center/racquet_reviews/ 目录下）
+        if "learning_center" in href and "review" in href.lower():
+            full_url = (
+                href
+                if href.startswith("http")
+                else f"https://www.tennis-warehouse.com{href}"
+            )
+            link_text = link.get_text(strip=True)
+
+            review_links.append({"url": full_url, "title": link_text})
+
+    if not review_links:
+        return {
+            "error": "No review page found for this product",
+            "suggestion": f"Searched for '{search_query}' but found no review links. The product may not have a published review yet.",
+            "search_query": search_query,
+        }
+
+    # 返回找到的评测链接
+    print(f"Success: Found {len(review_links)} review page(s)", file=sys.stderr)
 
     return {
-        "product_url": result.get("url"),
-        "specifications": specs,
-        "spec_count": result.get("spec_count", 0),
-        "note": "All specifications extracted from Tennis Warehouse product page",
+        "review_pages": review_links,
+        "count": len(review_links),
+        "search_query": search_query,
+        "suggestion": "Use the first URL with get_product_review tool to fetch the review data",
     }
 
 
-def get_product_review(tw_api: TennisWarehouseAPI, review_url: str) -> Dict[str, Any]:
-    """Extract comprehensive review data from Tennis Warehouse review pages"""
+def get_product_specs(tw_api: TennisWarehouseAPI, product_url: str) -> Dict[str, Any]:
+    """获取产品规格参数
 
-    print("Info: Getting product review from URL", file=sys.stderr)
+    从产品详情页面提取技术规格。
 
-    if not review_url or not isinstance(review_url, str):
-        return {"error": "Invalid review URL provided"}
+    Args:
+        tw_api: Tennis Warehouse API 客户端
+        product_url: 产品页面 URL
 
-    result = tw_api.get_product_review(review_url)
+    Returns:
+        包含产品规格或错误信息的字典
+    """
+    is_valid, error = validate_url(product_url, "tennis-warehouse.com")
+    if not is_valid:
+        return {"error": error}
 
-    if "error" in result:
-        print(f"Error: {result['error']}", file=sys.stderr)
-    else:
-        print("Success: Extracted review data successfully", file=sys.stderr)
+    print(f"Info: Fetching product specs from: {product_url}", file=sys.stderr)
+    result = tw_api.get_product_specs(product_url)
+
+    if "error" not in result:
+        print(
+            f"Success: Extracted {result.get('spec_count', 0)} specifications",
+            file=sys.stderr,
+        )
 
     return result
 
 
-def get_product_categories() -> list:
-    """Get all available product categories with product counts"""
+def get_product_review(tw_api: TennisWarehouseAPI, review_url: str) -> Dict[str, Any]:
+    """获取产品评测数据
 
-    print("📂 Getting product categories", file=sys.stderr)
-    print(f"Success: Found {len(PRODUCT_CATEGORIES)} categories", file=sys.stderr)
-    return PRODUCT_CATEGORIES
+    从评测页面提取性能评分、实验室数据和测试员反馈。
+
+    Args:
+        tw_api: Tennis Warehouse API 客户端
+        review_url: 评测页面 URL
+
+    Returns:
+        包含评测数据或错误信息的字典
+    """
+    is_valid, error = validate_url(review_url, "tennis-warehouse.com")
+    if not is_valid:
+        return {"error": error}
+
+    print(f"Info: Fetching review from: {review_url}", file=sys.stderr)
+    result = tw_api.get_product_review(review_url)
+
+    if "error" not in result:
+        scores_count = len(result.get("scores", {}))
+        lab_count = len(result.get("lab_data", {}))
+        print(
+            f"Success: Extracted {scores_count} scores, {lab_count} lab metrics",
+            file=sys.stderr,
+        )
+
+    return result
+
+
+def get_product_categories(tw_api: TennisWarehouseAPI) -> List[Dict[str, str]]:
+    """获取所有产品分类
+
+    返回 Tennis Warehouse 的所有产品分类列表。
+
+    Args:
+        tw_api: Tennis Warehouse API 客户端
+
+    Returns:
+        产品分类列表
+    """
+    result = tw_api.get_categories()
+    categories = result.get("categories", [])
+
+    print(f"Info: Retrieved {len(categories)} product categories", file=sys.stderr)
+    return categories
 
 
 def check_product_availability(
     tw_api: TennisWarehouseAPI, product_name: str
-) -> Dict[str, Any]:
-    """Check if a specific product is in stock"""
+) -> List[Dict[str, Any]]:
+    """检查产品库存状态
 
-    print(f"📦 Checking availability for: {product_name}", file=sys.stderr)
+    搜索产品并返回库存信息。
 
-    is_valid, error = validate_search_query(product_name)
-    if not is_valid:
-        return {"error": error}
+    Args:
+        tw_api: Tennis Warehouse API 客户端
+        product_name: 产品名称
+
+    Returns:
+        产品列表，包含库存状态
+    """
+    from ..api import extract_products
+
+    print(f"Info: Checking availability for: {product_name}", file=sys.stderr)
 
     raw_response = tw_api.check_availability(product_name)
     products = extract_products(raw_response)
 
-    if not products or "error" in products[0]:
-        return {
-            "found": False,
-            "message": "Product not found",
-            "error": products[0].get("error") if products else None,
-        }
+    if products and "error" not in products[0]:
+        available_count = sum(
+            1 for p in products if p.get("availability") == "Available"
+        )
+        print(
+            f"Success: Found {len(products)} products, {available_count} available",
+            file=sys.stderr,
+        )
 
-    # Return the best match
-    best_match = products[0]
-
-    result = {
-        "found": True,
-        "name": best_match.get("name"),
-        "brand": best_match.get("brand"),
-        "price": best_match.get("price"),
-        "in_stock": best_match.get("in_stock", False),
-        "availability": best_match.get("availability", "Unknown"),
-        "product_url": best_match.get("product_url"),
-    }
-
-    print(
-        f"Success: Product found: {result['name']} - {result['availability']}",
-        file=sys.stderr,
-    )
-    return result
+    return products
