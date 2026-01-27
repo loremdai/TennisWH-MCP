@@ -334,8 +334,16 @@ class TennisWarehouseAPI:
             return {"error": error_msg, "url": review_url}
 
     def _extract_breakdown_scores(self, soup: BeautifulSoup) -> Dict[str, float]:
-        """Extract performance scores from Breakdown Summary table"""
+        """Extract performance scores from review tables
+
+        Supports multiple table structures:
+        1. Tables with id="breakdown_summary"
+        2. Tables with class="racquet_rate_table"
+        3. Tables containing "Overall" score (fallback)
+        """
         scores = {}
+
+        # Method 1: Try breakdown_summary div (original structure)
         breakdown_div = soup.find("div", id="breakdown_summary")
         if breakdown_div:
             table_div = breakdown_div.find_next_sibling(
@@ -344,35 +352,78 @@ class TennisWarehouseAPI:
             if table_div:
                 table = table_div.find("table")
                 if table:
-                    rows = table.find_all("tr")
-                    for row in rows:
-                        cells = row.find_all("td")
-                        if len(cells) >= 2:
-                            category = cells[0].get_text(strip=True)
-                            score_cell = cells[1]
+                    scores = self._parse_score_table(table)
+                    if scores:
+                        return scores
 
-                            # Handle final_verdict specially
-                            if category.lower() == "final verdict":
-                                score_text = score_cell.get_text(strip=True)
-                                score_match = re.search(
-                                    r"(\d+(?:\.\d+)?)\s*/\s*10", score_text
-                                )
-                                if score_match:
-                                    try:
-                                        scores[category] = float(score_match.group(1))
-                                    except ValueError:
-                                        pass
-                            else:
-                                score_text = score_cell.get_text(strip=True)
-                                try:
-                                    scores[category] = float(score_text)
-                                except ValueError:
-                                    pass
+        # Method 2: Try racquet_rate_table class
+        rate_table = soup.find("table", class_="racquet_rate_table")
+        if rate_table:
+            scores = self._parse_score_table(rate_table)
+            if scores:
+                return scores
+
+        # Method 3: Fallback - find table containing "Overall" score
+        all_tables = soup.find_all("table")
+        for table in all_tables:
+            # Check if this table contains "Overall" text
+            overall_cell = table.find(
+                lambda tag: tag.name in ["th", "td"]
+                and "overall" in tag.get_text(strip=True).lower()
+            )
+            if overall_cell:
+                scores = self._parse_score_table(table)
+                if scores:
+                    return scores
+
+        return scores
+
+    def _parse_score_table(self, table) -> Dict[str, float]:
+        """Parse scores from a table element"""
+        scores = {}
+        rows = table.find_all("tr")
+
+        for row in rows:
+            cells = row.find_all(["td", "th"])
+            if len(cells) >= 2:
+                category = cells[0].get_text(strip=True)
+                score_cell = cells[1]
+
+                # Skip header rows
+                if category.lower() in ["category", "metric", ""]:
+                    continue
+
+                # Handle final_verdict specially
+                if category.lower() == "final verdict":
+                    score_text = score_cell.get_text(strip=True)
+                    score_match = re.search(r"(\d+(?:\.\d+)?)\s*/\s*10", score_text)
+                    if score_match:
+                        try:
+                            scores[category] = float(score_match.group(1))
+                        except ValueError:
+                            pass
+                else:
+                    score_text = score_cell.get_text(strip=True)
+                    # Try to extract number from text like "87" or "8.5"
+                    score_match = re.search(r"(\d+(?:\.\d+)?)", score_text)
+                    if score_match:
+                        try:
+                            scores[category] = float(score_match.group(1))
+                        except ValueError:
+                            pass
+
         return scores
 
     def _extract_lab_data(self, soup: BeautifulSoup) -> Dict[str, str]:
-        """Extract TWU Lab Data from table"""
+        """Extract TWU Lab Data from table
+
+        Supports multiple table structures:
+        1. Tables with id="table_data"
+        2. Tables with class="racquet_specs_table"
+        """
         lab_data = {}
+
+        # Method 1: Try table_data div (original structure)
         table_data_div = soup.find("div", id="table_data")
         if table_data_div:
             table_div = table_data_div.find_next_sibling(
@@ -381,23 +432,57 @@ class TennisWarehouseAPI:
             if table_div:
                 table = table_div.find("table")
                 if table:
-                    rows = table.find_all("tr")
-                    header_row = rows[0] if rows else None
-                    headers = []
-                    if header_row:
-                        headers = [
-                            th.get_text(strip=True) for th in header_row.find_all("th")
-                        ]
+                    lab_data = self._parse_lab_table(table)
+                    if lab_data:
+                        return lab_data
 
-                    for row in rows[1:]:
-                        cells = row.find_all("td")
-                        if cells and headers:
-                            metric = cells[0].get_text(strip=True)
-                            for i, cell in enumerate(cells[1:], 1):
-                                if i < len(headers):
-                                    value = cell.get_text(strip=True)
-                                    key = f"{metric} - {headers[i]}"
-                                    lab_data[key] = value
+        # Method 2: Try racquet_specs_table class
+        specs_table = soup.find("table", class_="racquet_specs_table")
+        if specs_table:
+            lab_data = self._parse_lab_table(specs_table)
+            if lab_data:
+                return lab_data
+
+        return lab_data
+
+    def _parse_lab_table(self, table) -> Dict[str, str]:
+        """Parse lab data from a table element"""
+        lab_data = {}
+        rows = table.find_all("tr")
+
+        # Try to find header row
+        header_row = rows[0] if rows else None
+        headers = []
+        if header_row:
+            headers = [
+                th.get_text(strip=True) for th in header_row.find_all(["th", "td"])
+            ]
+
+        # Parse data rows
+        for row in rows[1:] if len(rows) > 1 else rows:
+            cells = row.find_all(["td", "th"])
+            if cells:
+                metric = cells[0].get_text(strip=True)
+
+                # Skip empty or header-like rows
+                if not metric or metric.lower() in ["metric", "specification", ""]:
+                    continue
+
+                # If we have headers, use them
+                if headers and len(headers) > 1:
+                    for i, cell in enumerate(cells[1:], 1):
+                        if i < len(headers):
+                            value = cell.get_text(strip=True)
+                            if value:
+                                key = f"{metric} - {headers[i]}"
+                                lab_data[key] = value
+                else:
+                    # No headers, just use metric: value
+                    if len(cells) >= 2:
+                        value = cells[1].get_text(strip=True)
+                        if value:
+                            lab_data[metric] = value
+
         return lab_data
 
     def _extract_positives_negatives(self, soup: BeautifulSoup) -> tuple:
