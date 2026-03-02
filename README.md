@@ -42,6 +42,27 @@ uv sync
 uv run python main.py
 ```
 
+#### MCP Client Configuration (e.g., CherryStudio)
+
+To configure this server in CherryStudio or other MCP-supported clients, use the following settings based on the client UI:
+
+- **Name**: Tennis Warehouse (or any custom name)
+- **Type**: stdio (Standard Input / Output)
+- **Command**: `uv` (or the absolute path to the `uv` command, which you can find by running `which uv` in your terminal)
+- **Arguments** (enter one argument per line):
+  ```text
+  --directory
+  /absolute/path/to/tennis-warehouse-mcp
+  run
+  python
+  /absolute/path/to/tennis-warehouse-mcp/main.py
+  ```
+- **Env Variables** (optional, enter one pair per line):
+  ```text
+  TW_API_TIMEOUT=10
+  TW_MAX_RESULTS=20
+  ```
+
 #### Available Tools
 
 The server provides 11 MCP tools:
@@ -142,6 +163,27 @@ uv sync
 # 方式 2：直接运行
 uv run python main.py
 ```
+
+#### 在 CherryStudio 等客户端中配置
+
+如果你要在 CherryStudio 等支持 MCP 的客户端中配置此服务器，请根据客户端界面使用以下设置：
+
+- **名称**: Tennis Warehouse (或任意自定义名称)
+- **类型**: 标准输入 / 输出 (stdio)
+- **命令**: `uv` (或是系统上 `uv` 命令的绝对路径，可通过在终端执行 `which uv` 获取)
+- **参数** (注意：每行填入一个参数):
+  ```text
+  --directory
+  /绝对路径/tennis-warehouse-mcp
+  run
+  python
+  /绝对路径/tennis-warehouse-mcp/main.py
+  ```
+- **环境变量** (可选，每行填入一个):
+  ```text
+  TW_API_TIMEOUT=10
+  TW_MAX_RESULTS=20
+  ```
 
 #### 可用工具
 
